@@ -1,0 +1,132 @@
+---
+- hosts: all
+  tasks:
+
+    - name: resize disks
+      shell: |
+        /bin/growpart /dev/xvda 2
+        /usr/sbin/pvresize /dev/xvda2
+        /usr/sbin/lvextend -L +50G /dev/VolGroup00/varVol
+        /usr/sbin/lvextend -L +40G /dev/VolGroup00/rootVol
+        /usr/sbin/lvextend -L +40G /dev/VolGroup00/logVol
+        /usr/sbin/xfs_growfs /dev/VolGroup00/varVol
+        /usr/sbin/xfs_growfs /dev/VolGroup00/rootVol
+        /usr/sbin/xfs_growfs /dev/VolGroup00/logVol
+      tags:
+        resize_disks
+      become: true
+
+    - name: install python3
+      yum:
+        name: 
+          - python36
+          - python36-pip
+      become: true
+
+    - name: install aws cli
+      shell: |
+        curl "https://bootstrap.pypa.io/get-pip.py" -o "get-pip.py"
+        /usr/bin/python3 get-pip.py --no-warn-script-location
+        /usr/local/bin/pip3 install awscli --no-warn-script-location
+      become: true
+
+    - name: Add repository
+      yum_repository:
+        name: epel
+        description: Jenkins YUM repo
+        baseurl: http://pkg.jenkins-ci.org/redhat/jenkins.repo
+      become: true
+
+    - name: download jenkins.repo
+      get_url:
+        url: http://pkg.jenkins-ci.org/redhat-stable/jenkins.repo
+        dest: /etc/yum.repos.d/jenkins.repo
+      become: true
+
+    - name: download docker repo
+      get_url:
+        url: https://download.docker.com/linux/centos/docker-ce.repo
+        dest: /etc/yum.repos.d/docker.repo
+      become: true
+
+    - name: import jenkins key
+      rpm_key:
+        state: present
+        key: https://jenkins-ci.org/redhat/jenkins-ci.org.key
+      become: true
+
+    - name: install packages
+      yum:
+        name: 
+          - docker
+          - git
+          - java-1.8.0-openjdk-devel
+          - java
+          - jenkins
+          - pcre-tools
+      become: true
+
+    - name: start docker
+      service:
+        name: docker
+        state: started
+        enabled: yes
+      become: true
+
+    - name: docker group
+      group:
+        name: docker
+        state: present
+      become: true
+
+    - name: docker user
+      user:
+        name: docker
+        shell: /sbin/nologin
+        groups: docker
+      become: true
+
+    - name: jenkins user
+      user: 
+        name: jenkins
+        groups: docker
+      become: true
+      tags:
+        jenkins_user
+
+    - name: start docker at boot
+      service:
+        name: docker
+        enabled: yes
+      become: true
+
+    - name: Copy ssh key
+      copy:
+        src: /Users/marc.richardson/QPPMA/certs/qpp-ar-dev-20171214.pem
+        dest: /home/ec2-user/.ssh/id_rsa
+        owner: ec2-user
+        group: ec2-user
+        mode: '0600'
+        tags: 
+          ssh_key
+
+    - name: rsync from old jenkins
+# this address will change if you rebuild the host
+      shell: |
+         rsync  -a -e  "ssh -i /home/ec2-user/.ssh/id_rsa" --exclude "workspace_ws-cleanup*" ec2-user@10.247.33.6:/var/lib/jenkins/ /var/lib/jenkins/
+#         rsync  -a -e "ssh -i /home/ec2-user/.ssh/id_rsa" --exclude "workspace_ws-cleanup*" ec2-user@10.247.33.103:/var/lib/jenkins/users /var/lib/jenkins/
+#         rsync  -a -e "ssh -i /home/ec2-user/.ssh/id_rsa" --exclude "workspace_ws-cleanup*" ec2-user@10.247.33.103:/var/lib/jenkins/secrets /var/lib/jenkins/
+#         rsync  -a -e "ssh -i /home/ec2-user/.ssh/id_rsa" --exclude "workspace_ws-cleanup*" ec2-user@10.247.33.103:/var/lib/jenkins/jobs /var/lib/jenkins/
+      become: true
+      tags: 
+        copy_jenkins
+
+    - name: start jenkins
+      shell: 
+        service jenkins start
+      become: true
+      tags:
+        start_jenkins
+
+    - name: reboot so docker works as non-root
+      reboot:
